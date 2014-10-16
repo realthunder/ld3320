@@ -12,12 +12,10 @@ for arg in "$@"; do
 done
 
 if test $board; then
-    path="works/arduino/code/$base"
-    rsync='rsync -zavrl --partial --exclude=*.sw* --exclude=*build-* --progress --no-p --chmod=ugo=rwX' 
-    for p in ../Arduino-Makefile ../libraries ../$base; do
-        $rsync $p $remote:$path/../ || exit
-    done
-    ssh $remote "cd $path && make $@"
+    path="works/arduino/code"
+    rsync='rsync -zarl --partial --exclude=*.sw* --exclude=*build-* --progress --no-p --chmod=ugo=rwX' 
+    $rsync ../Teensy.mk ../Arduino-Makefile ../libraries ../$base $remote:$path || exit
+    ssh $remote "cd $path/$base && make $@"
 else
     make "$@"
 fi

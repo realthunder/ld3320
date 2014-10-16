@@ -1,10 +1,17 @@
-ARDUINO_LIBS = SPI SD SD/utility IRremote
-OTHER_LIBS = bitlash
+ARDUINO_LIBS = SPI IRremote
+OTHER_LIBS = bitlash SdFat-beta/SdFat SdFat-beta/SdFat/utility base64
 ARDUINO_SKETCHBOOK = ../
-EXTRA_FLAGS = -DIR_RAWBUF=256 -DBITLASH_INTERNAL -DBITLASH_PROMPT='">\r\n"'
+EXTRA_FLAGS = -DIR_RAWBUF=256 -DBITLASH_INTERNAL -DBITLASH_PROMPT='">\r\n"' -DSDFILE
 ARDUINO_DIR=../../ide
 
-ifeq ($(board),)
+ifneq ($(board),)
+	BOARD=$(board)
+else
+	BOARD=teensy3
+endif
+
+
+ifeq ($(BOARD),teensy3)
 
 USER_LIBS = $(OTHER_LIBS)
 OPTIONS = $(EXTRA_FLAGS) -DLAYOUT_US_ENGLISH -DUSB_SERIAL
@@ -16,14 +23,14 @@ else
 ARDUINO_LIBS += $(OTHER_LIBS)
 EXTRA_FLAGS += -DTINY_BUILD -DUSER_FUNCTIONS -DBAUD_RATE=9600 -DARDUINO_TIMER_SCALE=1
 
-ifeq ($(board),pro2)
-    override board = pro5v328
+ifeq ($(BOARD),pro2)
+    BOARD = pro5v328
 	EXTRA_FLAGS += -DBOARD_PRO2
 endif
-ifeq ($(board),nano3)
-    override board = nano328
+ifeq ($(BOARD),nano3)
+    BOARD = nano328
 endif
-BOARD_TAG = $(board)
+BOARD_TAG = $(BOARD)
 
 include ../Arduino-Makefile/Arduino.mk
 
