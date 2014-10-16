@@ -27,7 +27,9 @@
 
 	//	以下五个状态定义用来记录程序是在运行ASR识别过程中的哪个状态
 	#define LD_ASR_NONE			0x00	//	表示没有在作ASR识别
-	#define LD_ASR_RUNING		0x01	//	表示LD3320正在作ASR识别中
+	#define LD_ASR_INIT			0x02
+	#define LD_ASR_READY		0x03
+	#define LD_ASR_RUNNING		0x01	//	表示LD3320正在作ASR识别中
 	#define LD_ASR_FOUNDOK		0x10	//	表示一次识别流程结束后，有一个识别结果
 	#define LD_ASR_FOUNDZERO 	0x11	//	表示一次识别流程结束后，没有识别结果
 	#define LD_ASR_ERROR	 	0x31	//	表示一次识别流程中LD3320芯片内部出现不正确的状态
@@ -54,26 +56,31 @@
 	void LD_Init_ASR();	  
 
 	void LD_AdjustMIX2SPVolume(uint8 value);  	
-	uint8 LD_ProcessAsr(uint32 RecogAddr);
-	void LD_AsrStart();
 	uint8 LD_AsrRun();
 	uint8 LD_AsrAddFixed();
 	uint8 LD_GetResult();
-
-	void delay(unsigned long uldata); 
 
     void ProcessInt0();
 	uint8 RunASR();
 	extern void _nop_ (void);
 
 	void MCU_init();   
-	uint8 RunASR();
 	void  ProcessInt0();
 	void  test_led(void);
 
 //////////////////////////////////////////////////////////////////////
-uint8 asrLoop;
-int asrRunning;
+int asrState;
+int asrResult;
+int asrIndex;
+char asrTable[50][14];
+char asrDir[3][64];
+char asrFile[3][13];
+#define asrCurrent asrFile[0]
+#define asrCurrentDir asrDir[0]
+#define asrDefault asrFile[1]
+#define asrDefaultDir asrDir[1]
+#define asrError asrFile[2]
+#define asrErrorDir asrDir[2]
 
 #define SPI_TR SPI.transfer
 #define SET_PIN(_name) digitalWrite(_name##_PIN,HIGH)
@@ -133,6 +140,9 @@ void LD_reset()
 	delay(1);
 	SET_PIN(SCS);
 	delay(1);
+
+    asrState = LD_ASR_NONE;
+    asrIndex = 0;
 }
 
 void LD_Init_Common(int mp3)
@@ -173,7 +183,7 @@ void LD_Init_Common(int mp3)
 	delay(5);
 	LD_WriteReg(0xB9, 0x00);
 	LD_WriteReg(0xCF, 0x4F); 
-	// LD_WriteReg(0x6F, 0xFF); 
+	LD_WriteReg(0x6F, 0xFF); 
 } 
 
 void LD_Init_MP3()
@@ -216,18 +226,34 @@ void LD_Play() {
     LD_WriteReg(0x85, 0x5A);
 }
 
-boolean LD_CheckPlayEnd() {
+DECLARE_TIMEOUT;
+
+void LD_Mp3LoadFinish() {
+    RESET_TIMEOUT;
+    return;
+
     asrClaimSPI();
-    if(LD_ReadReg(0xBA)&CAUSE_MP3_SONG_END) {
-		LD_WriteReg(0x2B, 0);
-      	LD_WriteReg(0xBA, 0);	
-		LD_WriteReg(0xBC,0x0);	
-		LD_WriteReg(0x08,1);
-		delay(5);
-      	LD_WriteReg(0x08,0);
-		LD_WriteReg(0x33, 0);	 
-		return 1;
-     }
+    LD_WriteReg(0xBC, 0x01);
+    LD_WriteReg(0x29, 0x10);
+    delay(5);
+}
+
+boolean LD_CheckPlayEnd() {
+    return IS_TIMEOUT(1000);
+
+    asrClaimSPI();
+    byte v = LD_ReadReg(0xBA);
+    Serial.println(v);
+    if(v&CAUSE_MP3_SONG_END) {
+        LD_WriteReg(0x2B, 0);
+        LD_WriteReg(0xBA, 0);	
+        LD_WriteReg(0xBC,0x0);	
+        LD_WriteReg(0x08,1);
+        delay(5);
+        LD_WriteReg(0x08,0);
+        LD_WriteReg(0x33, 0);	 
+        return 1;
+    }
     return 0;
 }
 
@@ -241,6 +267,7 @@ int LD_LoadMp3Data(uint8_t *data, unsigned size) {
 
 void LD_Init_ASR()
 {	
+    asrClaimSPI();
 	LD_Init_Common(0);
 
 	LD_WriteReg(0xBD, 0x00);
@@ -257,6 +284,8 @@ void LD_Init_ASR()
 	LD_WriteReg(0x44, 0);    
 	LD_WriteReg(0x46, 8); 
 	delay( 1 );
+
+    asrState = LD_ASR_INIT;
 }
 
 
@@ -325,14 +354,10 @@ uint8 LD_Check_ASRBusyFlag_b2()
 	return flag;
 }
 
-void LD_AsrStart()
-{
-	LD_Init_ASR();
-}
-
 // Return 1: success.
 uint8 LD_AsrRun()
 {
+    asrClaimSPI();
 	LD_WriteReg(0x35, MIC_VOL);
     LD_WriteReg(0xB3, 0x05);	// 用户阅读 开发手册 理解B3寄存器的调整对于灵敏度和识别距离的影响	
 							    // 配合MIC，越大越灵敏
@@ -355,6 +380,7 @@ uint8 LD_AsrRun()
 	LD_WriteReg(0x29, 0x10);
 	
 	LD_WriteReg(0xBD, 0x00);
+    asrState = LD_ASR_RUNNING;
 	return 1;
 }
 
@@ -367,12 +393,16 @@ uint8 LD_AsrPoll() {
     return ret;
 }
 
-void LD_AsrAddFixed_ByString(char * pRecogString, uint8 k)
+boolean LD_AsrAddFixed_ByString(char * pRecogString, uint8 k)
 {
 	uint8 nAsrAddLength;
 
 	if (*pRecogString==0)
-		return;
+		return 0;
+
+    asrClaimSPI();
+    if(LD_Check_ASRBusyFlag_b2() == 0)
+        return 0;
 
 	LD_WriteReg(0xc1, k );
 	LD_WriteReg(0xc3, 0 );
@@ -391,6 +421,7 @@ void LD_AsrAddFixed_ByString(char * pRecogString, uint8 k)
 	LD_WriteReg(0xb9, nAsrAddLength);
 	LD_WriteReg(0xb2, 0xff);
 	LD_WriteReg(0x37, 0x04);
+    return 1;
 }
 
 void LD_AsrAddFixed_ByIndex(uint8 nIndex)
@@ -490,14 +521,13 @@ uint8 LD_GetResult()
 uint8 RunASR()
 {
 	uint8 i=0;
-    if(asrRunning>0) return 0;
 
     asrClaimSPI();
 
 	for (i=0; i<5; i++)			//	防止由于硬件原因导致LD3320芯片工作不正常，所以一共尝试5次启动ASR识别流程
 	{
         Serial.println("asr start");
-		LD_AsrStart();
+		LD_Init_ASR();
 		delay(100);
 		if (LD_AsrAddFixed()==0)
 		{
@@ -515,41 +545,88 @@ uint8 RunASR()
 			continue;
 		}
         Serial.println("asr running");
-        asrRunning = 1;
         return 1;
 	}
-    asrRunning = -1;
     return 0;
 }
 
-DECLARE_TIMEOUT;
+void asrExec(char *name) {
+    if(name[0] == '#')
+        sdPlay(name+1,1);
+    asrState = LD_ASR_NONE;
+}
+
+void asrExec(char *dir, char *name) {
+    if(dir && dir[0] && !sdcd(dir))
+        return;
+    asrExec(name);
+}
 
 numvar asrCmd() {
+    unsigned arg;
     unsigned n = getarg(0);
     if(n==0) {
-        if(asrLoop) {
-            LD_reset();
-            asrRunning = 0;
-            Serial.println("asr stopped");
-            asrLoop = 0;
-        }else
-            asrLoop = 1;
-        return 0;
-    }else {
-        unsigned arg = getarg(1);
-        switch(arg) {
-        case 1:
-            Serial.println("asr reset");
-            LD_reset();
-            LD_Init_ASR();
-            asrRunning = 0;
-            break;
-        case 0:
-            Serial.println((int)LD_ReadReg(0xb2));
-            break;
-        default:
-            Serial.println("unknonw argument");
+        LD_Init_ASR();
+        return 1;
+    }
+
+    switch(getarg(1)) {
+    case 0:
+        arg=getarg(2);
+        if(arg>2) {
+            Serial.println("error");
+            return 0;
         }
+        if(n>2) {
+            char *name= (char*)getstringarg(n);
+            unsigned len = strlen(name);
+            if(len+1>sizeof(asrFile[arg])) {
+                Serial.println("error:overflow");
+                return 0;
+            }
+            strcpy(asrFile[arg],name);
+            if(n>3) {
+                char *dir= (char*)getstringarg(n-1);
+                len = strlen(dir);
+                if(len+1>sizeof(asrDir[arg])) {
+                    Serial.println("error:overflow");
+                    return 0;
+                }
+                strcpy(asrDir[arg],dir);
+            }else
+                asrDir[arg][0] = 0;
+        }else if(asrFile[arg])
+            asrExec(asrDir[arg],asrFile[arg]);
+        break;
+    case 1:
+        if(!LD_AsrRun()) {
+            Serial.println("error:run");
+            LD_reset();
+            delay(100);
+            LD_Init_ASR();
+            asrState = LD_ASR_INIT;
+        }
+        break;
+    case 2:
+        if(asrState == LD_ASR_INIT) {
+            char *command = (char*)getstringarg(2);
+            if(asrIndex >= 49) {
+                Serial.println("error:overflow");
+                break;
+            }
+            LD_AsrAddFixed_ByString(command,asrIndex);
+            if(n>2) {
+                char *action = (char*)getstringarg(3);
+                strncpy(asrTable[asrIndex],action,sizeof(asrTable[asrIndex]));
+            }else
+                asrTable[asrIndex][0] = 0;
+            ++asrIndex;
+        }else
+            Serial.println("error:state");
+        break;
+    case 3:
+        RunASR();
+        break;
     }
 }
 
@@ -570,44 +647,55 @@ void setupAsr() {
 
 void loopAsr() {
     unsigned char ret;
-    if(!asrLoop) return;
 
-    if(asrRunning < 0) {
-        if(!IS_TIMEOUT(2000)) return;
-        Serial.println(_t_tick);
-        asrRunning = 0;
-    }
-
-    if(asrRunning == 0) {
-        RunASR();
-        RESET_TIMEOUT;
-        Serial.println(_t_start);
-        return;
-    }
-    
-    ret = LD_AsrPoll();
-    if(ret == 0x80) {
-        delay(1);
-        return;
-    }
-    asrRunning = 0;
-    if(ret && ret <= 4) {
-        Serial.print("asr result ");
-        Serial.print((int)ret);
-        Serial.print(',');
-        Serial.print((int)LD_ReadReg(0xc5));
-        if(ret>1) {
-            Serial.print(',');
-            Serial.print((int)LD_ReadReg(0xc7));
+    switch(asrState) {
+    case LD_ASR_ERROR:
+        if(asrError[0]) {
+            asrExec(asrErrorDir,asrError);
+            break;
         }
-        if(ret>2) {
-            Serial.print(',');
-            Serial.print((int)LD_ReadReg(0xc9));
+        //fall through
+    case LD_ASR_NONE:
+        if(asrCurrent[0])
+            asrExec(asrCurrentDir,asrCurrent);
+        break;
+    case LD_ASR_RUNNING:
+        ret = LD_AsrPoll();
+        if(ret == 0x80) {
+            delay(1);
+            return;
         }
-        if(ret>3) {
+        if(ret && ret <= 4) {
+            asrState = LD_ASR_FOUNDOK;
+            Serial.print("asr result ");
+            Serial.print((int)ret);
             Serial.print(',');
-            Serial.print((int)LD_ReadReg(0xcb));
+            asrResult = (int)LD_ReadReg(0xc5);
+            Serial.print(asrResult);
+            if(ret>1) {
+                Serial.print(',');
+                Serial.print((int)LD_ReadReg(0xc7));
+            }
+            if(ret>2) {
+                Serial.print(',');
+                Serial.print((int)LD_ReadReg(0xc9));
+            }
+            if(ret>3) {
+                Serial.print(',');
+                Serial.print((int)LD_ReadReg(0xcb));
+            }
+            Serial.println(' ');
+            if(asrTable[asrResult][0]) 
+                asrExec(asrTable[asrResult]);
+            else if(asrDefault[0])
+                asrExec(asrDefaultDir,asrDefault);
+        }else {
+            asrState = LD_ASR_FOUNDZERO;
+            if(asrDefault[0]) 
+                asrExec(asrDefaultDir,asrDefault);
+            else 
+                asrState = LD_ASR_NONE;
         }
-        Serial.println(' ');
+        break;
     }
 }

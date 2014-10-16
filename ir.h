@@ -22,6 +22,7 @@ void send5104(unsigned user,unsigned code /* 1~8 for K1~K8 */) {
     static const unsigned code_5104[] = {1,2,4,8,0x10,0x20,0x43,0x46};
     static const int tick_5104[] = {T2_5104,3*T2_5104};
     code = CODE_5104(user,code_5104[code-1]);
+    irsend.enableIROut(38);
     for(i=11;i>=0;--i) {
         unsigned c = (code>>i)&1;
         irsend.mark(tick_5104[c]);
@@ -89,7 +90,6 @@ void irDecode(decode_results *results,int width) {
 int irSend(int repeat, bool trace_raw=false) {
     int i;
     int ret = -1;
-    irsend.enableIROut(38);
     if(codeType == UNKNOWN /* i.e. raw */) {
         sp("Sent RAW");
         // Assume 38 KHz
