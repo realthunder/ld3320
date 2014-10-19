@@ -20,6 +20,8 @@ SdFile sdfile;
 SdFile sdMp3;
 SdSpi sdspi;
 
+uint32_t mp3Duration;
+
 byte sdDirPos[2];
 char sdDir[2][64];
 
@@ -70,7 +72,8 @@ void loopSD() {
     uint32_t size;
 
     if(sdState == SD_ENDING) {
-        if(LD_CheckPlayEnd()) {
+        // if(LD_CheckPlayEnd()) {
+        if(IS_TIMEOUT(mp3Duration)) {
             sdState = SD_INIT;
             Serial.println("ended");
         }
@@ -109,6 +112,10 @@ void loopSD() {
             if(filePos == fileSize) {
                 Serial.println("ending");
                 sdState = SD_ENDING;
+                if(!mp3Duration) {
+                    RESET_TIMEOUT;
+                    mp3Duration = 2000;
+                }
                 LD_Mp3LoadFinish();
                 sdMp3.close();
             }
@@ -123,6 +130,83 @@ void loopSD() {
         sdBufHead = (sdBufHead+ret)%SD_BUFSIZE;
     }while(ret == size);
 
+}
+
+uint32_t sdGetMp3Duration() {
+#define BITRATEFREE 0xfffe
+#define BITRATEBAD  0xffff
+    const static int bitrates[] = {
+        BITRATEFREE, BITRATEFREE, BITRATEFREE, BITRATEFREE, BITRATEFREE, 
+        32,  32,  32,  32,    8,
+        64,  48,  40,  48,   16,
+        96,  56,  48,  56,  24,
+        128,  64,  56,  64,  32,
+        160,  80,  64,  80,  40,
+        192,  96,  80,  96,  48,
+        224, 112,  96, 112,  56,
+        256, 128, 112, 128,  64,
+        288, 160, 128, 144,  80,
+        320, 192, 160, 160,  96,
+        352, 224, 192, 176, 112,
+        384, 256, 224, 192, 128,
+        416, 320, 256, 224, 144,
+        448, 384, 320, 256, 160,
+        BITRATEBAD, BITRATEBAD, BITRATEBAD, BITRATEBAD, BITRATEBAD
+    };
+
+    if(fileSize<4 || fileSize > (0xffffffff/8000)) {
+        Serial.println("invalid size");
+        return 0;
+    }
+
+    byte *buf = sdBuf;
+
+    //Check for ID3Tag
+    if(sdBuf[0] == 'I') {
+        uint32_t offset = (sdBuf[6]<<21)+
+            (sdBuf[7]<<14)+(sdBuf[8]<<7)+sdBuf[9];
+        if(sdBuf[5] & 0x10)
+            offset += 20;
+        else
+            offset += 10;
+        if(offset+4 > sizeof(sdBuf)) {
+            Serial.println("invalid tag size");
+            return 0;
+        }
+        buf += offset;
+    }
+
+    if(buf[0] != 0xff) {
+        Serial.println("invalid sync");
+        return 0;
+    }
+    byte v = (buf[1]&0x18)>>3;
+    byte l = (buf[1]&0x06)>>1;
+    byte i = (buf[2]&0xf0)>>4;
+
+    Serial.print(v);
+    Serial.print(',');
+    Serial.print(l);
+    Serial.print(',');
+    Serial.print(i);
+    i*=5;
+    if(v==3) 
+        i += l-1;
+    else
+        i+= 3+(l==3?0:1);
+    int bitrate = bitrates[i];
+    Serial.print(',');
+    Serial.print(bitrate);
+    Serial.print(',');
+
+    uint32_t duration = fileSize*8/bitrate+50;
+    if(duration & 0x8000) {
+        Serial.println("invalid bitrate");
+        return 0;
+    }
+    Serial.println(duration);
+    RESET_TIMEOUT;
+    return duration;
 }
 
 void sdPlay(char *filename, int wait) {
@@ -175,6 +259,8 @@ NEXT:
     filePos = readSize;
     sdBufHead = 0;
     sdBufTail = readSize;
+
+    mp3Duration = sdGetMp3Duration();
 
     LD_Init_MP3();
 	LD_AdjustMIX2SPVolume(SPEAKER_VOL);

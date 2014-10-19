@@ -1,0 +1,37 @@
+--- a/hardware/teensy/cores/teensy3/avr_emulation.h	2014-10-14 17:33:50.996546900 +0800
++++ b/hardware/teensy/cores/teensy3/avr_emulation.h	2014-10-14 17:33:26.605921900 +0800
+@@ -1008,18 +1008,24 @@
+ 	inline void enable_pins(void) __attribute__((always_inline)) {
+ 		//serial_print("enable_pins\n");
+ 		if ((pinout & 1) == 0) {
++            CORE_PIN7_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
+ 			CORE_PIN11_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(2); // DOUT/MOSI = 11 (PTC6)
+ 		} else {
++            CORE_PIN11_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
+ 			CORE_PIN7_CONFIG = PORT_PCR_MUX(2); // DOUT/MOSI = 7 (PTD2)
+ 		}
+ 		if ((pinout & 2) == 0) {
++            CORE_PIN8_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
+ 			CORE_PIN12_CONFIG = PORT_PCR_MUX(2);  // DIN/MISO = 12 (PTC7)
+ 		} else {
++            CORE_PIN12_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
+ 			CORE_PIN8_CONFIG = PORT_PCR_MUX(2);  // DIN/MISO = 8 (PTD3)
+ 		}
+ 		if ((pinout & 4) == 0) {
++            CORE_PIN14_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
+ 			CORE_PIN13_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(2); // SCK = 13 (PTC5)
+ 		} else {
++            CORE_PIN13_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
+ 			CORE_PIN14_CONFIG = PORT_PCR_MUX(2); // SCK = 14 (PTD1)
+ 		}
+ 	}
+@@ -1028,6 +1034,9 @@
+ 		CORE_PIN11_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
+ 		CORE_PIN12_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
+ 		CORE_PIN13_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
++        CORE_PIN7_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
++        CORE_PIN8_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
++        CORE_PIN14_CONFIG = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
+ 	}
+ };
+ extern SPCRemulation SPCR;

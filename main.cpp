@@ -28,6 +28,8 @@
 #ifdef BOARD_PRO2
 #else
 #   define IR_PIN 5
+#   define INT_PIN 1
+#   define LED_PIN 0
 #   define MD_PIN 6
 #   define SPIS_PIN 4
 #   define RSTB_PIN 3
